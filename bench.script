@@ -2,8 +2,8 @@
 # For example, ./bench.script --quick
 ./benchmark --memcpy abc --test 0 $1 $2
 ./benchmark --memcpy abc --test 1 $1 $2
-./benchmark --memcpy abc --test 48 $1 $2
-./benchmark --memcpy abcde --test 43 $1 $2
+./benchmark --memcpy abcde --test 48 $1 $2
+./benchmark --memcpy abcfg --test 43 $1 $2
 ./benchmark --memcpy abc --test 2 $1 $2
 ./benchmark --memset abcde --test 0 $1 $2
 ./benchmark --memset abcde --test 1 $1 $2

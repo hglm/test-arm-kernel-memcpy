@@ -1,0 +1,44 @@
+Instructions:
+
+1. Edit Makefile and define ARMV6 or ARMV7 depending on your platform.
+
+2. Optionally enable Thumb2 mode compilation by ucommenting the two lines
+   defining THUMB2_CFLAGS.
+
+3. Run make.
+
+Run ./bench.script to run a set of benchmarks covering various optimized
+memory functions and compare them with libc and the original kernel
+implementation.
+
+The "benchmark" program can be used to benchmark or validate any of the
+included memory functions.
+
+Examples:
+
+Display overview of test numbers, memcpy variants and memset variants:
+
+	./benchmark --list
+
+Test memset performance for test 0 (a mix of power-of-2 sizes):
+
+	./benchmark --memset abc --test 0
+
+Test copy page performance using both regular memcpy and copy_page (old
+and optimized implementations):
+
+	./benchmark --memcpy bcfg --test 43
+
+Test memcpy performance for test 2 (unaligned mixed sizes), and do it
+quickly (only three repetitions instead of five, and only one second per
+test instead of two);
+
+	./benchmark --quick --memcpy abc --test 2
+
+Validate (test for correctness) the optimized memcpy implementation:
+
+	./benchmark --repeat 50 --memcpy c --validate 
+
+Validate (test for correctness) the optimized memset implementation:
+
+	./benchmark --repeat 50 --memset c --validate
