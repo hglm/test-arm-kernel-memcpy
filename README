@@ -1,9 +1,12 @@
 Instructions:
 
-1. Edit Makefile and define ARMV6 or ARMV7 depending on your platform.
+1. Edit Makefile and define ARMV4, ARMV5, ARMV6 or ARMV7 depending on your
+   platform. Cortex is ARMV7. ARMV4 and ARMV5 have not been tested. Note:
+   since the optimized memcpy, copy_from_user and copy_to_user make
+   unconditional use of the PLD instruction, these won't work on ARMV4.
 
-2. Optionally enable Thumb2 mode compilation by ucommenting the two lines
-   defining THUMB2_CFLAGS.
+2. Optionally enable Thumb2 mode compilation by uncommenting the two lines
+   defining THUMB2_CFLAGS. Only supported on ARMV7.
 
 3. Run make.
 

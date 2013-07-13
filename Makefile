@@ -1,5 +1,6 @@
-# Change PLATFORM_CFLAGS to -DARMV7 to test armv7 (L1_CACHE_BYTES = 64),
-# otherwise armv6 is selected (L1_CACHE_BYTES = 32).
+# Set PLATFORM_CFLAGS to -DARMV7 to test armv7 (L1_CACHE_BYTES = 64),
+# set it -DARMV6 for armv6 (L1_CACHE_BYTES = 32). Other supported but
+# untested settings are -DARMV5 and -DARMV4.
 # For ARMV7, uncomment the two lines defining THUMB2_CFLAGS to enable
 # Thumb2 mode.
 

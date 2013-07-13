@@ -61,7 +61,7 @@
         .endm
 
 	.macro ldr1b ptr reg cond=al abort
-	ldr\cond\()b \reg, [\ptr], #1
+	ldrb\cond \reg, [\ptr], #1
 	.endm
 
 	.macro str1w ptr reg abort
@@ -85,7 +85,7 @@
 	.endm
 
 	.macro str1b ptr reg cond=al abort
-	str\cond\()b \reg, [\ptr], #1
+	strb\cond \reg, [\ptr], #1
 	.endm
 
 	.macro enter_no_regs
@@ -96,7 +96,7 @@
 	.macro exit_no_regs
 	/* Return the original destination in r0. */
 	ldr r0, [sp], #4
-	bx lr
+	BXLR
 	.endm
 
 	.text

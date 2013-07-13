@@ -440,7 +440,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
                 strne   ip, [r0], #4
                 tst     r2, #3
                 popeq	{r0}
-                bxeq	lr
+                BXEQLR
 
 	        /*
 		 * Handle the last up to three bytes. Unaligned access
@@ -453,7 +453,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
                 ldrbne  r3, [r1], #1
                 strbne  r3, [r0], #1
 4:		pop	{r0}
-		bx	lr
+		BXLR
 
 5:		/*
 		 * Sizes <= SMALL_SIZE_THRESHOLD bytes, both source and
@@ -478,7 +478,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		bge	6b
 		cmp	r2, #0
 		popeq	{r0}
-		bxeq	lr
+		BXEQLR
 		b	3b
 #endif
 
@@ -497,7 +497,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
                 ldrbne  r3, [r1], #1
                 strbne  r3, [r0], #1
 		pop	{r0}
-		bx	lr
+		BXLR
 .endif
 
 #if FAST_PATH_THRESHOLD > 0
@@ -668,7 +668,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 4:
 #endif
 		pop	{r0}
-		bx	lr
+		BXLR
 
                 /*
                  * Subroutine that copies a multiple of 4 bytes of size
