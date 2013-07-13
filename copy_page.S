@@ -33,6 +33,7 @@
 
 		.text
 	ARM(	.p2align 5	)
+	THUMB(	.p2align 2	)
 
 ENTRY(kernel_copy_page)
 		stmfd	sp!, {r4-r8, lr}
@@ -47,27 +48,25 @@ ENTRY(kernel_copy_page)
 #endif
 #endif
 #endif
-		movs	r2, #COPY_COUNT
+	PLD(	movs	r2, #(COPY_COUNT - PREFETCH_DISTANCE)	)
+	NO_PLD(	mov	r2, #COPY_COUNT				)
 1:	PLD(	pld	[r1, #PREFETCH_DISTANCE * L1_CACHE_BYTES])
 2:
 #if L1_CACHE_BYTES == 32
 		ldmia	r1!, {r3-r6}
-		subs	r2, r2, #1
 		ldmia   r1!, {r7, r8, ip, lr}
 		stmia	r0!, {r3-r6}
-	PLD(	cmp	r2, #PREFETCH_DISTANCE	)
+		subs	r2, r2, #1
 		stmia   r0!, {r7, r8, ip, lr}
 #else /* L1_CACHE_BYTES == 64 */
 		ldmia   r1!, {r3-r8, ip, lr}
-		subs	r2, r2, #1
 		stmia	r0!, {r3-r8, ip, lr}
 		ldmia   r1!, {r3-r8, ip, lr}
-	PLD(	cmp	r2, #PREFETCH_DISTANCE	)
+		subs	r2, r2, #1
 		stmia	r0!, {r3-r8, ip, lr}
 #endif
-	PLD(	bgt	1b			)
-	NO_PLD(	bne	1b			)
-	PLD(	cmp	r2, #0		)
-	PLD(	bne	2b		)
+		bgt	1b
+	PLD(	cmn	r2, #PREFETCH_DISTANCE	)
+	PLD(	bgt	2b			)
 		ldmfd	sp!, {r4-r8, pc}
 ENDPROC(kernel_copy_page)

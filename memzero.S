@@ -12,6 +12,7 @@
 	.text
 	.syntax unified
 ARM(	.p2align 5	)
+THUMB(	.p2align 2	)
 
 ENTRY(__kernel_memzero)
 	ands	r3, r0, #3

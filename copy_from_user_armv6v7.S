@@ -101,6 +101,8 @@
 
 	.text
 	.syntax unified
+ARM(	.p2align 5	)
+THUMB(	.p2align 2	)
 
 /* Prototype: void *copy_from_user(void *dest, const void *src, size_t n); */
 

@@ -88,6 +88,8 @@
 
 	.text
 	.syntax unified
+ARM(	.p2align 5	)
+THUMB(	.p2align 2	)
 
 /* Prototype: void *copy_to_user(void *dest, const void *src, size_t n); */
 

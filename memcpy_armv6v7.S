@@ -26,6 +26,8 @@
 
 .text
 .syntax unified
+ARM(	.p2align 5	)
+THUMB(	.p2align 2	)
 
 /*
  * The following memcpy implementation is optimized with a fast path

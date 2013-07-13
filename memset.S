@@ -17,9 +17,8 @@
 
 	.text
 	.syntax unified
-#ifndef CONFIG_THUMB2_KERNEL
-	.p2align 5
-#endif
+ARM(	.p2align 5	)
+THUMB(	.p2align 2	)
 
 ENTRY(kernel_memset)
 	ands	r3, r0, #3
@@ -40,7 +39,7 @@ ENTRY(kernel_memset)
 	blt	4f
 #if MEMSET_WRITE_ALIGN_BYTES > 0
 	ands	r4, r0, #(MEMSET_WRITE_ALIGN_BYTES - 1)
-	/* Let r4 be equal to the number of bytes align.  */
+	/* Let r4 be equal to the number of bytes to align.  */
 	rsb	r4, r4, #MEMSET_WRITE_ALIGN_BYTES
 	/*
 	 * At this point r4 contains the number of bytes to align
