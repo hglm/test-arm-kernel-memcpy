@@ -75,10 +75,12 @@ THUMB(	.p2align 2	)
 /*
  * EARLY_PREFETCHES is used in the fast path implementation.
  * The optimal value for EARLY_PREFETCHES was determined empirically.
- * It is equal to prefetch_distance + 1 for line_size 32.
- *            and prefetch_distance - 1 for line_size 64.
+ * It is equal to prefetch_distance + 1 for line_size 32,
+ * and equal to 2 for line_size 64.
  */
-#define EARLY_PREFETCHES (\prefetch_distance - (\line_size / 32) * 2 + 3)
+// #define EARLY_PREFETCHES (\prefetch_distance - (\line_size / 32) * 2 + 3)
+#define EARLY_PREFETCHES ((\prefetch_distance + 1) * (2 - \line_size / 32) \
+	+ 2 * (\line_size / 32 - 1))
 
 #if FAST_PATH_THRESHOLD > 0
 #define FAST_PATH(instr...) instr

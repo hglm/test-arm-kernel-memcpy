@@ -17,11 +17,14 @@
 #define L1_CACHE_BYTES 32
 #endif
 
+#ifndef PREFETCH_DISTANCE
 #if __LINUX_ARM_ARCH__ == 7
 #define PREFETCH_DISTANCE 3
 #else
 #define PREFETCH_DISTANCE 3
 #endif
+#endif
+
 #define PAGE_SZ 4096
 
 #if __LINUX_ARM_ARCH__ >= 5
