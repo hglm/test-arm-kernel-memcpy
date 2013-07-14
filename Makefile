@@ -5,11 +5,13 @@
 # Thumb2 mode.
 # To change the prefetch distance (in units of L1_CACHE_BYTES) from
 # the default of 3, edit the PREFETCH_DISTANCE value in PLATFORM_CFLAGS.
+# To enable NEON, uncomment the line defining NEON_CFLAGS.
 
 PLATFORM_CFLAGS = -DARMV7 -DPREFETCH_DISTANCE=3
 #THUMB2_CFLAGS = -march=armv7-a -Wa,-march=armv7-a -mthumb -Wa,-mthumb -Wa,-mimplicit-it=always \
 #-mthumb-interwork -DCONFIG_THUMB2_KERNEL -DCONFIG_THUMB
-CFLAGS = -std=gnu99 -Ofast -Wall $(PLATFORM_CFLAGS) $(THUMB2_CFLAGS)
+#NEON_CFLAGS = -DCONFIG_NEON
+CFLAGS = -std=gnu99 -Ofast -Wall $(PLATFORM_CFLAGS) $(THUMB2_CFLAGS) $(NEON_CFLAGS)
 
 all : benchmark
 

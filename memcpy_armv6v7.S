@@ -26,6 +26,9 @@
 
 .text
 .syntax unified
+#ifdef CONFIG_NEON
+.fpu neon
+#endif
 ARM(	.p2align 5	)
 THUMB(	.p2align 2	)
 
@@ -42,6 +45,8 @@ THUMB(	.p2align 2	)
  * - aligned_access must be 0 or 1. When enabled, no unaligned memory accesses
  *   will occur. Both small size tresholds for unaligned access are not used
  *   in this case.
+ * - use_neon must be 0 or 1. When enabled, NEON is used for block copy in the
+ *   main loop for larger sizes.
  */
 
 /* The threshold size for using the fast path for the word-aligned case. */
@@ -260,7 +265,7 @@ write_align, aligned_access
 /* The main memcpy function macro. */
 
 .macro memcpy_variant line_size, prefetch_distance, write_align, \
-aligned_access
+unaligned_write_align, aligned_access, use_neon
 
 .if \aligned_access == 1
 		cmp	r2, #3
@@ -584,7 +589,11 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		 * size check has already been handled.
 		 */
 
+.if \use_neon == 1
+		push	{r5}
+.else
 		push	{r5-r11}
+.endif
 
                 /*
                  * Assume a preload at aligned base + line_size will
@@ -626,18 +635,37 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		stmia   r0!, {r4-r7}
 		stmia   r0!, {r8-r11}
 .else
+.if \use_neon == 1
+		/*
+		 * Since the destination is 32-byte aligned,
+		 * specify 256-bit alignment for the NEON stores.
+		 * It should be possible to specify 32-bit
+		 * alignment for the NEON loads if the A bit is 0,
+		 * but gas doesn't accept it.
+		 */
+		vld1.32	{d0-d3}, [r1]!
+		vld1.32	{d4-d7}, [r1]!
+		vst1.32	{d0-d3}, [r0 :256]!
+		subs	r2, r2, #64
+		vst1.32	{d4-d7}, [r0 :256]!
+.else
 		ldmia   r1!, {r4-r11}
 		subs    r2, r2, #64
 		stmia   r0!, {r4-r11}
 		ldmia   r1!, {r4-r11}
 		stmia   r0!, {r4-r11}
 .endif
+.endif
 		bge	13b
 		cmn	r2, #(\prefetch_distance * \line_size)
 		bge	14b
 		/* Correct the count. */
 		adds	r2, r2, #((\prefetch_distance + 1) * \line_size)
+.if \use_neon == 1
+		pop	{r5}
+.else
 		pop	{r5-r11}
+.endif
 
 15:		ands	r3, r2, #60
 .if \write_align <= 8
@@ -819,8 +847,8 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		 * Check whether there are enough bytes to do one iteration
 		 * of the main loop.
 		 */
-.if (BOTH_UNALIGNED_SMALL_SIZE_THRESHOLD + 1 - 3 - (\write_align - 4)) < \line_size \
-|| \aligned_access == 1
+.if (BOTH_UNALIGNED_SMALL_SIZE_THRESHOLD + 1 - 3 - (\write_align - 4)) < \
+\line_size || \aligned_access == 1
 		cmp	r2, #\line_size
 		blt	15b
 .endif
@@ -851,13 +879,13 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		bgt	42f
 
 		unaligned_copy 8, 24, \line_size, \prefetch_distance, \
-			\write_align, \aligned_access
+			\unaligned_write_align, \aligned_access
 
 41:		unaligned_copy 16, 16, \line_size, \prefetch_distance, \
-			\write_align, \aligned_access
+			\unaligned_write_align, \aligned_access
 
 42:		unaligned_copy 24, 8, \line_size, \prefetch_distance, \
-			\write_align, \aligned_access
+			\unaligned_write_align, \aligned_access
 
 .endm
 
@@ -867,11 +895,21 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 ENTRY(kernel_memcpy_armv6v7)
 
 		/*
-		 * Use a memcpy variant with the given cache line size, prefetch distance
-		 * and write alignment, and use possible unaligned accesses for small sizes.
-		 * To strictly use aligned access (which is a little slower with slightly
-		 * increased code size), change the last parameter to 1.
+		 * Use a memcpy variant with the given cache line size,
+		 * prefetch distance, write alignment for the aligned case,
+		 * write alignment for the unaligned case, use possible
+		 * unaligned accesses for small sizes, and optionally
+		 * use NEON instructions.
+		 * To strictly use aligned access (which is a little slower
+		 * with slightly increased code size), change the second to
+		 * last parameter to 1.
 		 */
-		memcpy_variant L1_CACHE_BYTES, PREFETCH_DISTANCE, WRITE_ALIGN_BYTES, 0
+#ifdef CONFIG_NEON
+		/* When NEON is enabled, force write alignment to 32 bytes for the aligned case. */
+		memcpy_variant L1_CACHE_BYTES, PREFETCH_DISTANCE, 32, WRITE_ALIGN_BYTES, 0, 1
+#else
+		memcpy_variant L1_CACHE_BYTES, PREFETCH_DISTANCE, WRITE_ALIGN_BYTES, \
+			WRITE_ALIGN_BYTES, 0, 0
+#endif
 
 ENDPROC(kernel_memcpy_armv6v7)

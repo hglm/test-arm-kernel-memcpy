@@ -36,7 +36,9 @@
 	THUMB(	.p2align 2	)
 
 ENTRY(kernel_copy_page)
+#ifndef CONFIG_NEON
 		stmfd	sp!, {r4-r8, lr}
+#endif
 	PLD(	pld	[r1, #0]		)
 	PLD(	pld	[r1, #L1_CACHE_BYTES]		)
 #if PREFETCH_DISTANCE > 2
@@ -59,14 +61,26 @@ ENTRY(kernel_copy_page)
 		subs	r2, r2, #1
 		stmia   r0!, {r7, r8, ip, lr}
 #else /* L1_CACHE_BYTES == 64 */
+#ifdef CONFIG_NEON
+		vld1.64 {d0-d3}, [r1 :256]!
+		vld1.64 {d4-d7}, [r1 :256]!
+		vst1.64 {d0-d3}, [r0 :256]!
+		subs	r2, r2, #1
+		vst1.64 {d4-d7}, [r0 :256]!
+#else
 		ldmia   r1!, {r3-r8, ip, lr}
 		stmia	r0!, {r3-r8, ip, lr}
 		ldmia   r1!, {r3-r8, ip, lr}
 		subs	r2, r2, #1
 		stmia	r0!, {r3-r8, ip, lr}
 #endif
+#endif
 		bgt	1b
 	PLD(	cmn	r2, #PREFETCH_DISTANCE	)
 	PLD(	bgt	2b			)
+#ifndef CONFIG_NEON
 		ldmfd	sp!, {r4-r8, pc}
+#else
+		bx	lr
+#endif
 ENDPROC(kernel_copy_page)

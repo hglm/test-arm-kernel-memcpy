@@ -53,7 +53,7 @@
 
 #if __LINUX_ARM_ARCH__ >= 6
 #define CALGN_MEMSET(code...) code
-#if __LINUX_ARM_ARCH__ == 6
+#if __LINUX_ARM_ARCH__ == 6 || defined(CONFIG_NEON)
 #define MEMSET_WRITE_ALIGN_BYTES 32
 #else
 #define MEMSET_WRITE_ALIGN_BYTES 8

@@ -11,6 +11,9 @@
 
 	.text
 	.syntax unified
+#ifdef CONFIG_NEON
+	.fpu neon
+#endif
 ARM(	.p2align 5	)
 THUMB(	.p2align 2	)
 
@@ -57,7 +60,23 @@ ENTRY(__kernel_memzero)
 	blt	4f
 #endif
 
-2:	mov	r4, r2
+2:
+#ifdef CONFIG_NEON
+	/*
+	 * When NEON is enabled, MEMSET_WRITE_ALIGN_BYTES is
+	 * equal to 32 so specify 256-bit alignment in the
+	 * NEON store instructions.
+	 */
+	vmov.u64 d0, #0
+	vmov.u64 d1, #0
+	vmov	q1, q0
+3:	subs	r1, r1, #64
+	vst1.64 {d0-d3}, [r0 :256]!
+	cmp	r1, #64
+	vst1.64 {d0-d3}, [r0 :256]!
+	bge	3b
+#else
+	mov	r4, r2
 	push	{r5}
 	mov	r5, r2
 
@@ -70,6 +89,7 @@ ENTRY(__kernel_memzero)
 	bge	3b
 
 	pop	{r5}
+#endif
 	/* Early exit if there are 0 bytes left. */
 THUMB(	cbz	r1, 7f	)
 ARM(	teq	r1, #0	)

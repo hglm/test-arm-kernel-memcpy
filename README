@@ -8,7 +8,12 @@ Instructions:
 2. Optionally enable Thumb2 mode compilation by uncommenting the two lines
    defining THUMB2_CFLAGS. Only supported on ARMV7.
 
-3. Run make.
+3. Optionally change PREFETCH_DISTANCE from the default value of 3 to 2.
+
+4. Optionally enable NEON optimizations by uncommenting the line defining
+   NEON_CFLAGS. Only supported on devices with NEON.
+
+5. Run make.
 
 Run ./bench.script to run a set of benchmarks covering various optimized
 memory functions and compare them with libc and the original kernel
