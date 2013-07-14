@@ -721,7 +721,10 @@ static void do_validation(int repeat) {
         fill_buffer(buffer_compare);
         memcpy_emulate(buffer_compare + dest, buffer_compare + source, size);
         fill_buffer(buffer_page);
-        memcpy_func(buffer_page + dest, buffer_page + source, size);
+        if (memcpy_func(buffer_page + dest, buffer_page + source, size) != buffer_page + dest) {
+            printf("Validation failed: function did not return original destination address.\n");
+            passed = 0;
+	}
         if (!compare_buffers(buffer_page, buffer_compare)) {
             printf("Validation failed (source offset = 0x%08X, destination offset = 0x%08X, size = %d).\n",
                 source, dest, size);
@@ -754,7 +757,10 @@ static void do_validation_memset(int repeat) {
         fill_buffer(buffer_compare);
         memset_emulate(buffer_compare + dest, c, size);
         fill_buffer(buffer_page);
-        memset_func(buffer_page + dest, c, size);
+	if (memset_func(buffer_page + dest, c, size) != buffer_page + dest) {
+		printf("Validation failed: function did not return original destination address.\n");
+		passed = 0;
+	}
         if (!compare_buffers(buffer_page, buffer_compare)) {
             printf("Validation failed (destination offset = 0x%08X, size = %d).\n",
                 dest, size);
