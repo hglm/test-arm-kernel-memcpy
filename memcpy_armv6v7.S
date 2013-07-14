@@ -83,7 +83,6 @@ THUMB(	.p2align 2	)
  * It is equal to prefetch_distance + 1 for line_size 32,
  * and equal to 2 for line_size 64.
  */
-// #define EARLY_PREFETCHES (\prefetch_distance - (\line_size / 32) * 2 + 3)
 #define EARLY_PREFETCHES ((\prefetch_distance + 1) * (2 - \line_size / 32) \
 	+ 2 * (\line_size / 32 - 1))
 
@@ -477,11 +476,17 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		cmp	r2, #8
 		blt	3b
 6:		cmp	r2, #16
+#ifdef CONFIG_NEON
+		vld1.8	{d0}, [r1]!
+		sub	r2, r2, #8
+		vst1.8	{d0}, [r0]!
+#else
 		ldr	r3, [r1], #4
 		ldr	ip, [r1], #4
 		str	r3, [r0], #4
 		sub	r2, r2, #8
 		str	ip, [r0], #4
+#endif
 		bge	6b
 		cmp	r2, #0
 		popeq	{r0}
@@ -533,14 +538,20 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		cmp	r2, #8
 		blt	3b
 8:		cmp	r2, #16
+#ifdef CONFIG_NEON
+		vld1.8	{d0}, [r1]!
+		sub	r2, r2, #8
+		vst1.8	{d0}, [r0]!
+#else
 		ldr	r3, [r1], #4
 		ldr	ip, [r1], #4
 		str	r3, [r0], #4
 		sub	r2, r2, #8
 		str	ip, [r0], #4
+#endif
 		bge	8b
 		b	3b
-#endif
+#endif		/* SMALL_SIZE_THRESHOLD < 16 */
 .endif
 #endif		/* FAST_PATH_THRESHOLD > 0 */
 
@@ -694,7 +705,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
                 ldrhcs  r3, [r1], #2
                 strhcs  r3, [r0], #2
                 ldrbne  r3, [r1], #1
-                strbne  r3, [r0], #1
+                strbne  r3, [r0]
 4:
 #endif
 		pop	{r0}
@@ -1027,7 +1038,7 @@ ENTRY(kernel_memcpy_armv6v7)
 		 * with slightly increased code size), change the second to
 		 * last parameter to 1.
 		 */
-#ifdef CONFIG_NEON
+#if defined(CONFIG_NEON) && defined(CONFIG_THUMB2_KERNEL)
 		/* When NEON is enabled, force write alignment to 32 bytes for the aligned case. */
 		memcpy_variant L1_CACHE_BYTES, PREFETCH_DISTANCE, 32, WRITE_ALIGN_BYTES, 0, 1
 #else

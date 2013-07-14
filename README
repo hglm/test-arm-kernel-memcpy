@@ -21,11 +21,15 @@ implementation.
 
 Issues:
 
-The Cortex A9 core is handled as having L1_CACHE_BYTES of 64
-(L1_CACHE_SHIFT of 6 in kernel terms), but this may be inaccurate,
-impacting performance. It should probably be 32 which suggests that the
-kernel having L1_CACHE_SHIFT of 6 (L1_CACHE_BYTES of 32) for Cortex A9
-might be a mismatch.
+- The Cortex A9 core is handled as having L1_CACHE_BYTES of 64
+  (L1_CACHE_SHIFT of 6 in kernel terms), but this may be inaccurate,
+  impacting performance. It should probably be 32 which suggests that the
+  kernel having L1_CACHE_SHIFT of 6 (L1_CACHE_BYTES of 32) for Cortex A9
+  might be a mismatch.
+
+- When NEON is enabled, but Thumb2 is disabled, memcpy does not use NEON
+  instructions. This is because conditional NEON instructions are used
+  in memcpy which are only available in Thumb2 mode.
 
 The "benchmark" program can be used to benchmark or validate any of the
 included memory functions.
