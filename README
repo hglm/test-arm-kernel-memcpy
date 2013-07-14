@@ -19,6 +19,14 @@ Run ./bench.script to run a set of benchmarks covering various optimized
 memory functions and compare them with libc and the original kernel
 implementation.
 
+Issues:
+
+The Cortex A9 core is handled as having L1_CACHE_BYTES of 64
+(L1_CACHE_SHIFT of 6 in kernel terms), but this may be inaccurate,
+impacting performance. It should probably be 32 which suggests that the
+kernel having L1_CACHE_SHIFT of 6 (L1_CACHE_BYTES of 32) for Cortex A9
+might be a mismatch.
+
 The "benchmark" program can be used to benchmark or validate any of the
 included memory functions.
 

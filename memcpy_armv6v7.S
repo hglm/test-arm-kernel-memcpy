@@ -872,6 +872,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 40:		/*
 		 * Unaligned case. Size is > SMALL_SIZE_THRESHOLD - 3.
 		 */
+.if \use_neon == 0
 		bic	r1, r1, #3
 		cmp	r3, #2
 		ldr	r3, [r1], #4
@@ -886,6 +887,128 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 
 42:		unaligned_copy 24, 8, \line_size, \prefetch_distance, \
 			\unaligned_write_align, \aligned_access
+
+.else	/* use_neon == 1 */
+		/*
+		 * NEON unaligned copy. The destination has been aligned
+		 * to a word boundary, size > SMALL_SIZE_THRESHOLD - 3.
+		 */
+		cmp	r2, #64
+		blt	56f
+		subs	r2, r2, #64
+
+		/* Align to a 32-byte boundary. */
+		ands	r4, r0, #31
+		rsb	r4, r4, #32
+		beq	50f
+		tst	r4, #4
+		ldrne	r3, [r1 :8], #4		/* Unaligned access. */
+		sub	r2, r2, r4
+		strne	r3, [r0 :32], #4
+		tst	r4, #8
+		vld1ne.8 {d0}, [r1]!
+		vst1ne.8 {d0}, [r0 :64]!
+		cmp	r4, #16
+		vld1ge.8 {d0, d1}, [r1]!
+		vst1ge.8 {d0, d1}, [r0 :128]!
+		cmp	r2, #0
+		addlt	r2, r2, #64
+		blt	55f
+50:
+
+                /*
+                 * Assume a preload at aligned base + line_size will
+                 * be useful.
+                 */
+		pld     [ip, #\line_size]
+		push	{r5}
+
+		mov	r4, ip
+                add     r5, r1, #(\prefetch_distance * \line_size)
+                subs    r2, r2, #(\prefetch_distance * \line_size)
+                bic     r3, r5, #31
+                add     r4, r4, #(2 * \line_size)
+                blt     54f
+                cmp     r4, r3
+                sub     ip, r3, r1
+                /*
+                 * "Catch-up" the early preloads (which have been performed up
+                 * to aligned source address + line_size) to the preload offset
+                 * used in the main loop.
+                 */
+                bge     52f
+51:             adds    r4, r4, #\line_size		/* Thumb16 */
+                cmp     r4, r3
+                pld     [r4, #(- \line_size)]
+                blt     51b
+52:
+		/*
+		 * Process 64 unaligned bytes from source at a time and copy
+		 * them to the 32-byte aligned destination.
+		 */
+53:		pld	[r1, ip]
+54:		vld1.8	{d0-d3}, [r1]!
+		vld1.8	{d4-d7}, [r1]!
+		vst1.64	{d0-d3}, [r0 :256]!
+		subs	r2, r2, #64
+		vst1.64	{d4-d7}, [r0 :256]!
+		bge	53b
+		cmn	r2, #(\prefetch_distance * \line_size)
+		bge	54b
+		/* Correct the count. */
+		adds	r2, r2, #(\prefetch_distance * \line_size + 64)
+		pop	{r5}
+
+		/* Process the last 0-63 bytes. */
+55:		cmp	r2, #32
+		vld1ge.8 {d0-d3}, [r1]!
+		vst1ge.8 {d0-d3}, [r0 :128]!
+		tst	r2, #16
+		vld1ne.8 {d0, d1}, [r1]!
+		vst1ne.8 {d0, d1}, [r0 :128]!
+		tst	r2, #8
+		vld1ne.8 {d0}, [r1]!
+		vst1ne.8 {d0}, [r0 :64]!
+		tst	r2, #4
+		ldrne	r3, [r1 :8], #4		/* Unaligned access. */
+		strne	r3, [r0 :32], #4
+
+		pop	{r4}
+.if \aligned_access == 1
+		b	7b
+.else
+		b	3b
+.endif
+		/* Handle small size of 0-63 bytes, unaligned. */
+56:		cmp	r2, #32
+		vld1ge.8 {d0-d3}, [r1]!
+		/*
+		 * Assembler doesn't accept :32 alignment for
+		 * the following instruction.
+		 */
+		vst1ge.8 {d0-d3}, [r0]!
+		tst	r2, #16
+		vld1ne.8 {d0, d1}, [r1]!
+		/*
+		 * Assembler doesn't accept :32 alignment for
+		 * the following instruction.
+		 */
+		vst1ne.8 {d0, d1}, [r0]!
+		tst	r2, #8
+		ldrdne	r3, r4, [r1 :8]		/* Unaligned access. */
+		strdne	r3, r4, [r0 :32]
+		tst	r2, #4
+		ldrne	r3, [r1 :8], #4		/* Unaligned access. */
+		strne	r3, [r0 :32], #4
+
+		pop	{r4}
+.if \aligned_access == 1
+		b	7b
+.else
+		b	3b
+.endif
+
+.endif	/* use_neon == 1 */
 
 .endm
 
