@@ -26,7 +26,7 @@
 
 .text
 .syntax unified
-#ifdef CONFIG_NEON
+#ifdef NEON_MEMORY_FUNCTIONS
 .fpu neon
 #endif
 ARM(	.p2align 5	)
@@ -80,10 +80,9 @@ THUMB(	.p2align 2	)
 /*
  * EARLY_PREFETCHES is used in the fast path implementation.
  * The optimal value for EARLY_PREFETCHES was determined empirically.
- * It is equal to prefetch_distance + 1 for line_size 32,
- * and equal to 2 for line_size 64.
+ * It is equal 4 for line_size 32, and equal to 2 for line_size 64.
  */
-#define EARLY_PREFETCHES ((\prefetch_distance + 1) * (2 - \line_size / 32) \
+#define EARLY_PREFETCHES (4 * (2 - \line_size / 32) \
 	+ 2 * (\line_size / 32 - 1))
 
 #if FAST_PATH_THRESHOLD > 0
@@ -203,7 +202,7 @@ write_align, aligned_access
                 blt     51b
 52:
 		/*
-		 * Note that when L1_CACHE_BYTES is 64, we are
+		 * Note that when PRELOAD_CACHE_LINE_SIZE is 64, we are
 		 * prefetching every 32 bytes. Although not optimal
 		 * there doesn't seem to be big penalty for the extra
 		 * preload instructions and it prevents greater
@@ -476,7 +475,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		cmp	r2, #8
 		blt	3b
 6:		cmp	r2, #16
-#ifdef CONFIG_NEON
+#ifdef NEON_MEMORY_FUNCTIONS
 		vld1.8	{d0}, [r1]!
 		sub	r2, r2, #8
 		vst1.8	{d0}, [r0]!
@@ -538,7 +537,7 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		cmp	r2, #8
 		blt	3b
 8:		cmp	r2, #16
-#ifdef CONFIG_NEON
+#ifdef NEON_MEMORY_FUNCTIONS
 		vld1.8	{d0}, [r1]!
 		sub	r2, r2, #8
 		vst1.8	{d0}, [r0]!
@@ -1038,11 +1037,11 @@ ENTRY(kernel_memcpy_armv6v7)
 		 * with slightly increased code size), change the second to
 		 * last parameter to 1.
 		 */
-#if defined(CONFIG_NEON) && defined(CONFIG_THUMB2_KERNEL)
+#if defined(NEON_MEMORY_FUNCTIONS) && defined(CONFIG_THUMB2_KERNEL)
 		/* When NEON is enabled, force write alignment to 32 bytes for the aligned case. */
-		memcpy_variant L1_CACHE_BYTES, PREFETCH_DISTANCE, 32, WRITE_ALIGN_BYTES, 0, 1
+		memcpy_variant PRELOAD_CACHE_LINE_SIZE, PREFETCH_DISTANCE, 32, WRITE_ALIGN_BYTES, 0, 1
 #else
-		memcpy_variant L1_CACHE_BYTES, PREFETCH_DISTANCE, WRITE_ALIGN_BYTES, \
+		memcpy_variant PRELOAD_CACHE_LINE_SIZE, PREFETCH_DISTANCE, WRITE_ALIGN_BYTES, \
 			WRITE_ALIGN_BYTES, 0, 0
 #endif
 

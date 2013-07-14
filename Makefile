@@ -1,16 +1,21 @@
 # Set PLATFORM_CFLAGS to -DARMV7 to test armv7 (L1_CACHE_BYTES = 64),
 # set it -DARMV6 for armv6 (L1_CACHE_BYTES = 32). Other supported but
 # untested settings are -DARMV5 and -DARMV4.
+# To override the default prefetch strategy, change PRELOAD_CACHE_LINE_SIZE
+# and PRELOAD_OFFSET in PLATFORM_CFLAGS.
+# The default values are 32 and 128 for armv6 and earlier and 32 and 256
+# for armv7 and later. Most Cortex chips other than earlier A9 revisions
+# work better with a line size of 64.
 # For ARMV7, uncomment the two lines defining THUMB2_CFLAGS to enable
 # Thumb2 mode.
-# To change the prefetch distance (in units of L1_CACHE_BYTES) from
-# the default of 3, edit the PREFETCH_DISTANCE value in PLATFORM_CFLAGS.
 # To enable NEON, uncomment the line defining NEON_CFLAGS.
+# PRELOAD_CACHE_LINE_SIZE must be 64 for NEON to be actually used. NEON
+# memory functions are currently unsupported in the kernel.
 
-PLATFORM_CFLAGS = -DARMV7 -DPREFETCH_DISTANCE=3
+PLATFORM_CFLAGS = -DARMV7 #-DPRELOAD_CACHE_LINE_SIZE=64 -DPRELOAD_OFFSET=192
 #THUMB2_CFLAGS = -march=armv7-a -Wa,-march=armv7-a -mthumb -Wa,-mthumb -Wa,-mimplicit-it=always \
 #-mthumb-interwork -DCONFIG_THUMB2_KERNEL -DCONFIG_THUMB
-#NEON_CFLAGS = -DCONFIG_NEON
+#NEON_CFLAGS = -DUSE_NEON
 CFLAGS = -std=gnu99 -Ofast -Wall $(PLATFORM_CFLAGS) $(THUMB2_CFLAGS) $(NEON_CFLAGS)
 
 all : benchmark

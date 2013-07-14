@@ -11,7 +11,7 @@
 
 	.text
 	.syntax unified
-#ifdef CONFIG_NEON
+#ifdef NEON_MEMORY_FUNCTIONS
 	.fpu neon
 #endif
 ARM(	.p2align 5	)
@@ -60,7 +60,7 @@ ENTRY(__kernel_memzero)
 #endif
 
 2:
-#ifdef CONFIG_NEON
+#ifdef NEON_MEMORY_FUNCTIONS
 	/*
 	 * When NEON is enabled, MEMSET_WRITE_ALIGN_BYTES is
 	 * equal to 32 so specify 256-bit alignment in the
