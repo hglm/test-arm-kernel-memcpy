@@ -656,8 +656,10 @@ static void do_test_all(const char *name, void (*test_func)(), int bytes) {
 }
 
 static void fill_buffer(uint8_t *buffer) {
+    uint32_t v = 0xEEAAEEAA;
     for (int i = 0; i < 1024 * 1024 * 16; i++) {
-        buffer[i] = i & 0xFF;
+        buffer[i] = (v >> 24);
+	v += i ^ 0x12345678;
     }
 }
 
@@ -718,9 +720,9 @@ static void do_validation(int repeat) {
         fflush(stdout);
         fill_buffer(buffer_compare);
         memcpy_emulate(buffer_compare + dest, buffer_compare + source, size);
-        fill_buffer(buffer_alloc);
-        memcpy_func(buffer_alloc + dest, buffer_alloc + source, size);
-        if (!compare_buffers(buffer_alloc, buffer_compare)) {
+        fill_buffer(buffer_page);
+        memcpy_func(buffer_page + dest, buffer_page + source, size);
+        if (!compare_buffers(buffer_page, buffer_compare)) {
             printf("Validation failed (source offset = 0x%08X, destination offset = 0x%08X, size = %d).\n",
                 source, dest, size);
             passed = 0;
@@ -751,9 +753,9 @@ static void do_validation_memset(int repeat) {
         fflush(stdout);
         fill_buffer(buffer_compare);
         memset_emulate(buffer_compare + dest, c, size);
-        fill_buffer(buffer_alloc);
-        memset_func(buffer_alloc + dest, c, size);
-        if (!compare_buffers(buffer_alloc, buffer_compare)) {
+        fill_buffer(buffer_page);
+        memset_func(buffer_page + dest, c, size);
+        if (!compare_buffers(buffer_page, buffer_compare)) {
             printf("Validation failed (destination offset = 0x%08X, size = %d).\n",
                 dest, size);
             passed = 0;
