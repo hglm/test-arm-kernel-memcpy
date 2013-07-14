@@ -26,7 +26,7 @@ THUMB(	.p2align 2	)
 ENTRY(kernel_memset)
 	ands	r3, r0, #3
 	mov	ip, r0
-	bne	8f
+	bne	7f
 
 /*
  * we know that the pointer in r0 is aligned to a word boundary.
@@ -98,9 +98,9 @@ ENTRY(kernel_memset)
 	pop	{r5}
 #endif
 	/* Early exit if there are 0 bytes left. */
-THUMB(	cbz	r2, 7f	)
+THUMB(	cbz	r2, 9f	)
 ARM(	teq	r2, #0	)
-ARM(	beq	7f	)
+ARM(	beq	9f	)
 
 	/* Handle 8-64 bytes. */
 4:	bic	r4, r2, #7
@@ -138,12 +138,8 @@ ARM(	lsrs	r4, r4, #1	)
 	mov	r0, ip
 	BXLR
 
-7:	pop	{r4}
-	mov	r0, ip
-	BXLR
-
-8:	cmp	r2, #4
-	blt	9f
+7:	cmp	r2, #4
+	blt	8f
 	cmp	r3, #2
 	sub	r2, r2, #4
 	strble	r1, [r0]
@@ -154,12 +150,16 @@ ARM(	lsrs	r4, r4, #1	)
 	b	1b
 
 	/* 0 to 3 bytes left. */
-9:	cmp	r2, #2
+8:	cmp	r2, #2
 	strbge  r1, [r0]
 	strbge  r1, [r0, #1]
 	addge	r0, r0, #2
 	tst	r2, #1
 	strbne  r1, [r0]
+	mov	r0, ip
+	BXLR
+
+9:	pop	{r4}
 	mov	r0, ip
 	BXLR
 ENDPROC(kernel_memset)
