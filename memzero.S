@@ -11,9 +11,6 @@
 
 	.text
 	.syntax unified
-#ifdef NEON_MEMORY_FUNCTIONS
-	.fpu neon
-#endif
 ARM(	.p2align 5	)
 THUMB(	.p2align 2	)
 
@@ -60,25 +57,11 @@ ENTRY(__kernel_memzero)
 #endif
 
 2:
-#ifdef NEON_MEMORY_FUNCTIONS
-	/*
-	 * When NEON is enabled, MEMSET_WRITE_ALIGN_BYTES is
-	 * equal to 32 so specify 256-bit alignment in the
-	 * NEON store instructions.
-	 */
-	vmov.u64 d0, #0
-	vmov.u64 d1, #0
-	vmov	q1, q0
-3:	subs	r1, r1, #64
-	vst1.64 {d0-d3}, [r0 :256]!
-	cmp	r1, #64
-	vst1.64 {d0-d3}, [r0 :256]!
-	bge	3b
-#else
 	mov	r4, r2
 	push	{r5}
 	mov	r5, r2
 
+	/* Copy 64 bytes in one iteration. */
 3:	stmia	r0!, {r2, r3, r4, r5}
 	subs	r1, r1, #64		/* Thumb16 */
 	stmia	r0!, {r2, r3, r4, r5}
@@ -88,7 +71,6 @@ ENTRY(__kernel_memzero)
 	bge	3b
 
 	pop	{r5}
-#endif
 	/* Early exit if there are 0 bytes left. */
 THUMB(	cbz	r1, 9f	)
 ARM(	teq	r1, #0	)
@@ -128,6 +110,7 @@ ARM(	lsrs	r4, r4, #1	)
 	strbne	r2, [r0]
 	BXLR
 
+	/* Unaligned case; align the destination. */
 7:	cmp	r1, #4
 	blt	8f
 	cmp	r3, #2

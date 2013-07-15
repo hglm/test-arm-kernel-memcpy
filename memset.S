@@ -17,9 +17,6 @@
 
 	.text
 	.syntax unified
-#ifdef NEON_MEMORY_FUNCTIONS
-	.fpu neon
-#endif
 ARM(	.p2align 5	)
 THUMB(	.p2align 2	)
 
@@ -50,8 +47,8 @@ ENTRY(kernel_memset)
 	 * to align.
 	 */
 #if MEMSET_WRITE_ALIGN_BYTES == 8
-	subne	r2, r2, r4
 	strne	r1, [r0], #4
+	subne	r2, r2, r4
 #elif MEMSET_WRITE_ALIGN_BYTES == 32
 	beq	2f
 	tst     r4, #4
@@ -68,25 +65,11 @@ ENTRY(kernel_memset)
 #endif
 
 2:
-#ifdef NEON_MEMORY_FUNCTIONS
-        /*
-         * When NEON is enabled, MEMSET_WRITE_ALIGN_BYTES is
-         * equal to 32 so specify 256-bit alignment in the
-         * NEON store instructions.
-         */
-        vmov	d0, r1, r3
-	vmov	d1, r1, r3
-        vmov	q1, q0
-3:      subs    r2, r2, #64
-        vst1.64 {d0-d3}, [r0 :256]!
-        cmp     r2, #64
-        vst1.64 {d0-d3}, [r0 :256]!
-        bge     3b
-#else
 	mov	r4, r1
 	push	{r5}
 	mov	r5, r1
 
+	/* Copy 64 bytes in one iteration. */
 3:	stmia	r0!, {r1, r3, r4, r5}
 	subs	r2, r2, #64		/* Thumb16 */
 	stmia	r0!, {r1, r3, r4, r5}
@@ -96,7 +79,6 @@ ENTRY(kernel_memset)
 	bge	3b
 
 	pop	{r5}
-#endif
 	/* Early exit if there are 0 bytes left. */
 THUMB(	cbz	r2, 9f	)
 ARM(	teq	r2, #0	)
@@ -108,7 +90,7 @@ ARM(	beq	9f	)
 	rsb	r4, r4, #64
 	/* The stmia instruction is 32-bit for ARM, 16-bit for Thumb2. */
 THUMB(	lsrs	r4, r4, #2	)
-ARM(	lsrs	r4, r4, #1	)
+ARM(	lsr	r4, r4, #1	)
 	add	pc, pc, r4
 	nop
 	stmia	r0!, {r1, r3}
@@ -138,6 +120,7 @@ ARM(	lsrs	r4, r4, #1	)
 	mov	r0, ip
 	BXLR
 
+	/* Unaligned case; align the destination. */
 7:	cmp	r2, #4
 	blt	8f
 	cmp	r3, #2

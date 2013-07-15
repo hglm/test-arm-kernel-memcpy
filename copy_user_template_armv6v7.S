@@ -76,10 +76,10 @@
  *	the ldr1w or str1w instructions (some of these macros may expand to
  *	than one 32bit instruction in Thumb-2)
  *
- * PRELOAD_CACHE_LINE_SIZE
+ * PRELOAD_LINE_SIZE
  *
  *      The cache line size used for prefetches. Preloads are performed at
- *      PRELOAD_CACHE_LINE_SIZE aligned addresses. However, if PRELOAD_CACHE_LINE_SIZE == 64,
+ *      PRELOAD_LINE_SIZE aligned addresses. However, if PRELOAD_LINE_SIZE == 64,
  *      in the case of unaligned copies preload instructions are performed
  *      at 32 bytes aligned addresses. The code could be modified to strictly
  *      preload at 64 bytes aligned addresses, at the cost of increasing code
@@ -89,7 +89,7 @@
  *
  * PREFETCH_DISTANCE
  *
- *      The prefetch distance in units of PRELOAD_CACHE_LINE_SIZE used for prefetches.
+ *      The prefetch distance in units of PRELOAD_LINE_SIZE used for prefetches.
  *
  * WRITE_ALIGN_BYTES
  *
@@ -153,7 +153,7 @@
                  */
 		cmp	r2, #SMALL_SIZE_THRESHOLD
 		/* Calculate the aligned base for preloads. */
-	PLD(	bic	ip, r1, #(PRELOAD_CACHE_LINE_SIZE - 1)	)
+	PLD(	bic	ip, r1, #(PRELOAD_LINE_SIZE - 1)	)
 		enter_no_regs
 	PLD(	pld	[ip]				)
 		orr	r3, r0, r1
@@ -271,7 +271,7 @@
 37:		tst	r3, #3
 		push	{r4, lr}
 	PLD(	mov	r3, ip			)
-	PLD(	pld	[ip, #PRELOAD_CACHE_LINE_SIZE]	)
+	PLD(	pld	[ip, #PRELOAD_LINE_SIZE]	)
 		bne	33b	/* Unaligned. */
 
 		subs	r2, r2, #32
@@ -290,7 +290,7 @@
 	PLD(	mov	r3, ip			)
 		blt	8f
 		ands	ip, r0, #3
-	PLD(	pld	[r3, #PRELOAD_CACHE_LINE_SIZE]	)
+	PLD(	pld	[r3, #PRELOAD_LINE_SIZE]	)
 		bne	9f
 		ands	ip, r1, #3
 		bne	10f
@@ -331,7 +331,7 @@ THUMB(	CALGN(	nop				)	)
 #endif
 
 2:
-#if PRELOAD_CACHE_LINE_SIZE == 64
+#if PRELOAD_LINE_SIZE == 64
 		cmp	r2, #32
 		/* Correct the count when jumping to the tail, */
 		addlt	r2, r2, #32
@@ -339,31 +339,31 @@ THUMB(	CALGN(	nop				)	)
 		subs	r2, r2, #32
 #endif
 		/*
-                 * Assume a preload at aligned base + 2 * PRELOAD_CACHE_LINE_SIZE will
+                 * Assume a preload at aligned base + 2 * PRELOAD_LINE_SIZE will
 		 * be useful.
 		 */
-	PLD(	pld	[r8, #(2 * PRELOAD_CACHE_LINE_SIZE)]	)
+	PLD(	pld	[r8, #(2 * PRELOAD_LINE_SIZE)]	)
 
-	PLD(	add	r9, r1, #(PREFETCH_DISTANCE * PRELOAD_CACHE_LINE_SIZE)	)
-	PLD(	subs	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_CACHE_LINE_SIZE)	)
-	PLD(	bic     r3, r9, #(PRELOAD_CACHE_LINE_SIZE - 1)			)
-	PLD(	add	r8, #(3 * PRELOAD_CACHE_LINE_SIZE)	)
+	PLD(	add	r9, r1, #(PREFETCH_DISTANCE * PRELOAD_LINE_SIZE)	)
+	PLD(	subs	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_LINE_SIZE)	)
+	PLD(	bic     r3, r9, #(PRELOAD_LINE_SIZE - 1)			)
+	PLD(	add	r8, #(3 * PRELOAD_LINE_SIZE)	)
 	PLD(	blt	4f				)
 	PLD(	cmp	r8, r3				)
 	PLD(	sub	r9, r3, r1			)
 		/*
 		 * "Catch-up" the early preloads (which have been performed up
-		 * to aligned base + 2 * PRELOAD_CACHE_LINE_SIZE) to the preload offset
+		 * to aligned base + 2 * PRELOAD_LINE_SIZE) to the preload offset
 		 * used in the main loop.
 		 */
 	PLD(	bge	41f				)
-42:	PLD(	adds	r8, r8, #PRELOAD_CACHE_LINE_SIZE		)	/* Thumb16 */
+42:	PLD(	adds	r8, r8, #PRELOAD_LINE_SIZE		)	/* Thumb16 */
 	PLD(	cmp	r8, r3				)
-	PLD(	pld	[r8, #(- PRELOAD_CACHE_LINE_SIZE)]	)
+	PLD(	pld	[r8, #(- PRELOAD_LINE_SIZE)]	)
 	PLD(	blt	42b				)
 41:
 
-#if PRELOAD_CACHE_LINE_SIZE == 32
+#if PRELOAD_LINE_SIZE == 32
 3:	PLD(	pld	[r1, r9]		)
 4:		ldr8w	r1, r3, r4, r5, r6, r7, r8, ip, lr, abort=20f
 		subs	r2, r2, #32
@@ -373,9 +373,9 @@ THUMB(	CALGN(	nop				)	)
 	PLD(	cmn	r2, #(PREFETCH_DISTANCE * 32)	)
 	PLD(	bge	4b			)
 		/* Correct the count. */
-	PLD(	adds	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_CACHE_LINE_SIZE + 32)	)
+	PLD(	adds	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_LINE_SIZE + 32)	)
 	NO_PLD(	add	r2, r2, #32						)
-#else /* PRELOAD_CACHE_LINE_SIZE == 64 */
+#else /* PRELOAD_LINE_SIZE == 64 */
 3:	PLD(	pld	[r1, r9]		)
 4:		ldr8w	r1, r3, r4, r5, r6, r7, r8, ip, lr, abort=20f
 		subs	r2, r2, #64
@@ -386,12 +386,12 @@ THUMB(	CALGN(	nop				)	)
 	PLD(	cmn	r2, #(PREFETCH_DISTANCE * 64)	)
 	PLD(	bge	4b				)
 		/* Correct the count. */
-	PLD(	adds	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_CACHE_LINE_SIZE + 64)	)
+	PLD(	adds	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_LINE_SIZE + 64)	)
 	NO_PLD( add	r2, r2, #64						)
 #endif
 30:
 5:
-#if PRELOAD_CACHE_LINE_SIZE == 64
+#if PRELOAD_LINE_SIZE == 64
 		tst     r2, #32
 		beq	31f
 		ldr8w	r1, r3, r4, r5, r6, r7, r8, ip, lr, abort=20f
@@ -508,27 +508,27 @@ THUMB(	CALGN(	nop				)	)
 		 */
 11:		push {r5-r10}
 
-	PLD(	add	r10, r1, #(PREFETCH_DISTANCE * PRELOAD_CACHE_LINE_SIZE)	)
-	PLD(	subs	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_CACHE_LINE_SIZE)	)
+	PLD(	add	r10, r1, #(PREFETCH_DISTANCE * PRELOAD_LINE_SIZE)	)
+	PLD(	subs	r2, r2, #(PREFETCH_DISTANCE * PRELOAD_LINE_SIZE)	)
 	PLD(	bic     r4, r10, #31					)
-	PLD(	add	r3, #(2 * PRELOAD_CACHE_LINE_SIZE)	)
+	PLD(	add	r3, #(2 * PRELOAD_LINE_SIZE)	)
 	PLD(	blt	13f				)
 	PLD(	cmp	r3, r4				)
 	PLD(	sub	r10, r4, r1			)
 		/*
 		 * "Catch-up" the early preloads (which have been performed up
-		 * to aligned base + 2 * PRELOAD_CACHE_LINE_SIZE) to the preload offset
+		 * to aligned base + 2 * PRELOAD_LINE_SIZE) to the preload offset
 		 * used in the main loop.
 		 */
 	PLD(	bge	46f				)
-47:	PLD(	adds	r3, r3, #PRELOAD_CACHE_LINE_SIZE		)	/* Thumb16 */
+47:	PLD(	adds	r3, r3, #PRELOAD_LINE_SIZE		)	/* Thumb16 */
 	PLD(	cmp	r3, r4				)
-	PLD(	pld	[r3, #(- PRELOAD_CACHE_LINE_SIZE)]	)
+	PLD(	pld	[r3, #(- PRELOAD_LINE_SIZE)]	)
 	PLD(	blt	47b				)
 46:
 
 		/*
-		 * Note that when PRELOAD_CACHE_LINE_SIZE is 64, we are
+		 * Note that when PRELOAD_LINE_SIZE is 64, we are
 		 * prefetching every 32 bytes. Although not optimal
 		 * there doesn't seem to be big penalty for the extra
 		 * preload instructions and it prevents greater
@@ -556,7 +556,7 @@ THUMB(	CALGN(	nop				)	)
 		subs	r2, r2, #32
 		str8w	r0, r3, r4, r5, r6, r7, r8, r9, ip, , abort=19f
 		bge	12b
-	PLD(	cmn	r2, #(PREFETCH_DISTANCE * PRELOAD_CACHE_LINE_SIZE)	)
+	PLD(	cmn	r2, #(PREFETCH_DISTANCE * PRELOAD_LINE_SIZE)	)
 	PLD(	bge	13b				)
 
 		pop	{r5-r10}

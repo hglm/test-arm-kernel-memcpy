@@ -202,7 +202,7 @@ write_align, aligned_access
                 blt     51b
 52:
 		/*
-		 * Note that when PRELOAD_CACHE_LINE_SIZE is 64, we are
+		 * Note that when PRELOAD_LINE_SIZE is 64, we are
 		 * prefetching every 32 bytes. Although not optimal
 		 * there doesn't seem to be big penalty for the extra
 		 * preload instructions and it prevents greater
@@ -1039,9 +1039,9 @@ ENTRY(kernel_memcpy_armv6v7)
 		 */
 #if defined(NEON_MEMORY_FUNCTIONS) && defined(CONFIG_THUMB2_KERNEL)
 		/* When NEON is enabled, force write alignment to 32 bytes for the aligned case. */
-		memcpy_variant PRELOAD_CACHE_LINE_SIZE, PREFETCH_DISTANCE, 32, WRITE_ALIGN_BYTES, 0, 1
+		memcpy_variant PRELOAD_LINE_SIZE, PREFETCH_DISTANCE, 32, WRITE_ALIGN_BYTES, 0, 1
 #else
-		memcpy_variant PRELOAD_CACHE_LINE_SIZE, PREFETCH_DISTANCE, WRITE_ALIGN_BYTES, \
+		memcpy_variant PRELOAD_LINE_SIZE, PREFETCH_DISTANCE, WRITE_ALIGN_BYTES, \
 			WRITE_ALIGN_BYTES, 0, 0
 #endif
 
