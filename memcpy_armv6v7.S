@@ -1005,8 +1005,8 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 		 */
 		vst1ne.8 {d0, d1}, [r0]!
 		tst	r2, #8
-		ldrdne	r3, r4, [r1 :8]		/* Unaligned access. */
-		strdne	r3, r4, [r0 :32]
+		ldrdne	r3, r4, [r1 :8], #8	/* Unaligned access. */
+		strdne	r3, r4, [r0 :32], #8
 		tst	r2, #4
 		ldrne	r3, [r1 :8], #4		/* Unaligned access. */
 		strne	r3, [r0 :32], #4
