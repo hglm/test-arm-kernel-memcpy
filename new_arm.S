@@ -22,21 +22,6 @@
  *
  */
 
-/* Prevent the stack from becoming executable */
-#if defined(__linux__) && defined(__ELF__)
-.section .note.GNU-stack,"",%progbits
-#endif
-
-.text
-.syntax unified
-
-.macro asm_function function_name
-    .global \function_name
-.func \function_name
-.type \function_name, function
-\function_name:
-.endm
-
 #ifdef CONFIG_THUMB
 #define W(instr) instr.w
 #define THUMB(instr...)	instr
@@ -46,6 +31,35 @@
 #define THUMB(instr...)
 #define ARM(instr...) instr
 #endif
+
+/*
+ * In practice, because the way NEON is configured on most systems,
+ * specifying alignment hints for NEON instructions doesn't seem
+ * to improve performance, or even degrade performance in some cases.
+ * However, actually having the address aligned to an element
+ * boundary or greater is beneficial.
+ */
+#define NEON_ALIGN(n)
+/* #define NEON_ALIGN(n) :n */
+
+/* Prevent the stack from becoming executable */
+#if defined(__linux__) && defined(__ELF__)
+.section .note.GNU-stack,"",%progbits
+#endif
+
+.text
+.syntax unified
+.arch armv7a
+.fpu neon
+
+.macro asm_function function_name
+    .global \function_name
+.func \function_name
+.type \function_name, function
+ARM(    .p2align 5      )
+THUMB(  .p2align 2      )
+\function_name:
+.endm
 
 /*
  * The following memcpy implementation is optimized with a fast path
@@ -877,22 +891,591 @@ THUMB(		lsrs    r4, r4, #1	)	/* Thumb16 */
 
 .endm
 
-#if defined(MEMCPY_REPLACEMENT_SUNXI) || defined(MEMCPY_REPLACEMENT_RPI)
+/*
+ * The following is a NEON-based memcpy implementation that may use unaligned
+ * access, but NEON instruction addresses are always at least element aligned.
+ * It is optimized for both Thumb2 (CONFIG_THUMB) and ARM mode.
+ *
+ * - line_size is the cache line size used for prefetches. Must be 64 or 32.
+ * - prefetch_distance is the number of cache lines to look ahead and must be
+ *   >= 2, or 0 to disable prefetching in the main copying loop.
+ * - early_prefetch indicates whether to perform early preloads. Must be 0 or 1.
+ *   When prefetch_distance > 0, early_prefetch should be 1. To remove all PLD
+ *   instructions altogether, set both prefetch_distance and early_prefetch
+ *   to 0.
+ */
 
-#ifdef MEMCPY_REPLACEMENT_SUNXI
+.macro neon_memcpy_variant line_size, prefetch_distance, early_prefetch
 
-asm_function memcpy
-		memcpy_variant 64, 3, 0, 0
-.endfunc
+		cmp	r2, #3
+.if \prefetch_distance > 0 || \early_prefetch == 1
+		push	{r0}
+.else
+		mov	ip, r0
+.endif
+		orr	r3, r0, r1
+		ble	8f
+.if \prefetch_distance > 0 || \early_prefetch == 1
+		bic	ip, r1, #(\line_size - 1)
+.endif
+		tst	r3, #3
+.if \early_prefetch == 1
+		pld	[ip]
+.endif
+		bne	10f		/* Unaligned source or destination. */
+		push	{r4}
 
+		/* Aligned source and destination. */
+1:		cmp	r2, #256
+		/*
+		 * Jump to word-aligned NEON fast path <= 256 bytes.
+                 */
+		ble	18f
+		subs	r2, r2, #\line_size
+
+                /* Align to a 32-byte boundary. */
+#ifdef CONFIG_THUMB
+		/*
+		 * Use conditional NEON instructions when
+		 * available (Thumb2 mode)
+		 */
+                ands    r4, r0, #31
+                rsb     r4, r4, #32
+                beq     31f
+                tst     r4, #4
+                sub     r2, r2, r4
+                ldrne   r3, [r1 :32], #4
+                strne   r3, [r0 :32], #4
+                tst     r4, #8
+		vld1ne.32 {d0}, [r1]!
+		vst1ne.64 {d0}, [r0 NEON_ALIGN(64)]!
+                cmp     r4, #16
+		vld1ge.32 {d2, d3}, [r1]!
+		vst1ge.64 {d2, d3}, [r0 NEON_ALIGN(128)]!
+#else
+		/*
+		 * Otherwise, branch into a series of single
+		 * loads/stores.
+	 	 */
+                ands    r4, r0, #31
+                beq     31f
+		rsb	r3, r4, #32
+		lsl	r4, r4, #1
+		sub	r2, r2, r3
+		add	pc, pc, r4
+		nop
+		ldr	r3, [r1], #4
+		str	r3, [r0], #4
+		ldr	r4, [r1], #4
+		str	r4, [r0], #4
+		ldr	r3, [r1], #4
+		str	r3, [r0], #4
+		ldr	r4, [r1], #4
+		str	r4, [r0], #4
+		ldr	r3, [r1], #4
+		str	r3, [r0], #4
+		ldr	r4, [r1], #4
+		str	r4, [r0], #4
+		ldr	r3, [r1], #4
+		str	r3, [r0], #4
+		ldr	r4, [r1], #4
+		str	r4, [r0], #4
+#endif
+                cmp     r2, #0
+		addlt	r2, r2, \line_size
+                blt     6f
+
+31:
+.if \early_prefetch == 1
+		pld     [ip, #\line_size]
+.endif
+.if \prefetch_distance > 0
+                /*
+                 * Assume a preload at aligned base + line_size will
+                 * be useful.
+                 */
+		push	{r5}
+		mov	r4, ip
+                add     r5, r1, #(\prefetch_distance * \line_size)
+                subs    r2, r2, #(\prefetch_distance * \line_size)
+                bic     r3, r5, #(\line_size - 1)
+                add     r4, r4, #(2 * \line_size)
+                blt     5f
+                cmp     r4, r3
+                sub     ip, r3, r1
+                /*
+                 * "Catch-up" the early preloads (which have been performed up
+                 * to aligned source address + line_size) to the preload offset
+                 * used in the main loop.
+                 */
+                bge     3f
+2:              adds    r4, r4, #\line_size		/* Thumb16 */
+                cmp     r4, r3
+                pld     [r4, #(- \line_size)]
+                blt     2b
+3:
+.endif
+
+		sub	ip, ip, #\line_size
+4:
+                /*
+                 * Since the destination is 32-byte aligned,
+                 * specify 256-bit alignment for the NEON stores.
+                 */
+.if \line_size == 32
+		vld1.32 {d0-d3}, [r1]!
+                subs    r2, r2, #32
+.if \prefetch_distance > 0
+		pld	[r1, ip]
+.endif
+                vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+.else	/* line_size == 64 */
+		vld1.32 {d0-d3}, [r1]!
+                vld1.32 {d4-d7}, [r1]!
+.if \prefetch_distance > 0
+		pld	[r1, ip]
+.endif
+                vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+                subs    r2, r2, #64
+                vst1.64 {d4-d7}, [r0 NEON_ALIGN(256)]!
+.endif
+                bge     4b
+.if \prefetch_distance > 0
+5:
+.if \line_size == 32
+		vld1.32 {d0-d3}, [r1]!
+                subs    r2, r2, #32
+                vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+.else	/* line_size == 64 */
+		vld1.32 {d0-d3}, [r1]!
+                vld1.32 {d4-d7}, [r1]!
+                vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+                subs    r2, r2, #64
+                vst1.64 {d4-d7}, [r0 NEON_ALIGN(256)]!
+.endif
+        	cmn     r2, #(\prefetch_distance * \line_size)
+        	bge     5b
+.endif
+                /* Correct the count. */
+23:     	adds    r2, r2, #((\prefetch_distance + 1) * \line_size)
+.if \prefetch_distance > 0
+		pop	{r5}
+.endif
+
+                /*
+		 * Process the last 0-(line_size - 1) bytes, destination
+		 * 32-byte aligned, source word aligned.
+		 */
+6:
+#ifdef CONFIG_THUMB
+		/*
+		 * Use conditional NEON instructions when
+		 * available (Thumb2 mode).
+		 */
+.if \line_size == 64
+		cmp     r2, #32
+                vld1ge.32 {d0-d3}, [r1]!
+                vst1ge.64 {d0-d3}, [r0 NEON_ALIGN(128)]!
+                tst     r2, #16
+                vld1ne.32 {d0, d1}, [r1]!
+                vst1ne.64 {d0, d1}, [r0 NEON_ALIGN(128)]!
+.else
+                cmp     r2, #16
+                vld1ge.32 {d0, d1}, [r1]!
+                vst1ge.64 {d0, d1}, [r0 NEON_ALIGN(128)]!
+.endif
+                tst     r2, #8
+                vld1ne.32 {d2}, [r1]!
+                vst1ne.64 {d2}, [r0 NEON_ALIGN(64)]!
+                tst     r2, #4
+                ldrne   r3, [r1], #4
+                strne   r3, [r0 :32], #4
+
+                pop     {r4}
+#else
+		/*
+		 * Just use the world-aligned tail code if we
+                 * don't have Thumb2.
+		 */
+		b	17f
 #endif
 
-#ifdef MEMCPY_REPLACEMENT_RPI
+	        /*
+		 * Handle the last up to three bytes. Unaligned access
+		 * may take place if source or destination is not
+		 * half-word aligned.
+		 */
+8:		movs    r2, r2, lsl #31
+                ldrhcs  r3, [r1], #2
+                strhcs  r3, [r0], #2
+                ldrbne  r3, [r1], #1
+                strbne  r3, [r0]
+9:
+.if \prefetch_distance > 0 || \early_prefetch == 1
+		pop	{r0}
+.else
+		mov	r0, ip
+.endif
+		bx	lr
 
+10:             /*
+                 * Unaligned case. Align the destination.
+                 * Number of bytes is > 3.
+                 * Note: This may use unaligned access.
+                 * ip is the line_size aligned source address for preloads.
+                 */
+		cmp	r2, #64
+                push    {r4}
+		/* For small sizes < 64 bytes just use the unaligned tail code. */
+		blt	16f
+		ands	r3, r0, #3
+                beq     11f     /* Destination is aligned but source is not. */
+                /* Align the destination. */
+		cmp	r3, #2
+                ldrbne  r4, [r1], #1
+                subne   r2, r2, #1
+                strbne  r4, [r0], #1
+                ldrhle  r4, [r1], #2
+                suble   r2, r2, #2
+                strhle  r4, [r0], #2
+                tst	r1, #3
+                beq     1b      /* Destination and source are now aligned. */
+		/* Destination is now aligned to a word boundary. */
+11:
+		cmp	r2, #64
+		/*
+		 * Jump to non-aligned NEON tail code for <= 64 bytes.
+                 */
+		ble	16f
+		subs	r2, r2, #\line_size
+
+                /* Align destination to a 32-byte boundary. */
+                ands    r4, r0, #31
+                rsb     r4, r4, #32
+                beq     20f
+                tst     r4, #4
+                sub     r2, r2, r4
+                ldrne   r3, [r1 :8], #4         /* Unaligned access. */
+                strne   r3, [r0 :32], #4
+                tst     r4, #8
+#ifdef CONFIG_THUMB
+		/*
+		 * Use conditional NEON instructions when
+		 * available (Thumb2 mode)
+		 */
+                vld1ne.8 {d0}, [r1]!
+                vst1ne.64 {d0}, [r0 NEON_ALIGN(64)]!
+                cmp     r4, #16
+                vld1ge.8 {d2, d3}, [r1]!
+                vst1ge.64 {d2, d3}, [r0 NEON_ALIGN(128)]!
+#else
+		beq	31f
+                vld1.8 {d0}, [r1]!
+                vst1.64 {d0}, [r0 NEON_ALIGN(64)]!
+31:             cmp     r4, #16
+		blt	32f
+                vld1.8 {d2, d3}, [r1]!
+                vst1.64 {d2, d3}, [r0 NEON_ALIGN(128)]!
+32:
+#endif
+                cmp     r2, #0
+                addlt   r2, r2, #\line_size
+                blt     16f
+20:
+
+.if \early_prefetch == 1
+		pld     [ip, #\line_size]
+.endif
+.if \prefetch_distance > 0
+                /*
+                 * Assume a preload at aligned base + line_size will
+                 * be useful.
+                 */
+		push	{r5}
+		mov	r4, ip
+                add     r5, r1, #(\prefetch_distance * \line_size)
+                subs    r2, r2, #(\prefetch_distance * \line_size)
+                bic     r3, r5, #(\line_size - 1)
+                add     r4, r4, #(2 * \line_size)
+                blt     15f
+                cmp     r4, r3
+                sub     ip, r3, r1
+                /*
+                 * "Catch-up" the early preloads (which have been performed up
+                 * to aligned source address + line_size) to the preload offset
+                 * used in the main loop.
+                 */
+                bge     13f
+12:             adds    r4, r4, #\line_size		/* Thumb16 */
+                cmp     r4, r3
+                pld     [r4, #(- \line_size)]
+                blt     12b
+.endif
+
+13:
+                /*
+                 * Process 64 unaligned bytes from source at a time and copy
+                 * them to the 32-byte aligned destination.
+                 */
+14:
+.if \prefetch_distance > 0
+		pld     [r1, ip]
+.endif
+15:
+.if \line_size == 32
+		vld1.8  {d0-d3}, [r1]!
+                subs    r2, r2, #32
+                vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+.else	/* line_size == 64 */
+		vld1.8  {d0-d3}, [r1]!
+                vld1.8  {d4-d7}, [r1]!
+                vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+                subs    r2, r2, #64
+                vst1.64 {d4-d7}, [r0 NEON_ALIGN(256)]!
+.endif
+                bge     14b
+.if \prefetch_distance > 0
+		cmn     r2, #(\prefetch_distance * \line_size)
+        	bge     15b
+.endif
+                /* Correct the count. */
+                adds    r2, r2, #((\prefetch_distance + 1) * \line_size)
+.if \prefetch_distance > 0
+        	pop     {r5}
+.endif
+
+		/*
+		 * Handle last 0-(line_size - 1) bytes (destination 32-byte
+		 * aligned source unaligned).
+		 */
+#ifdef CONFIG_THUMB
+		/*
+		 * Use conditional NEON instructions when
+		 * available (Thumb2 mode)
+		 */
+.if \line_size == 64
+		cmp     r2, #32
+                vld1ge.8 {d0-d3}, [r1]!
+                vst1ge.64 {d0-d3}, [r0 NEON_ALIGN(128)]!
+                tst     r2, #16
+                vld1ne.8 {d0, d1}, [r1]!
+                vst1ne.64 {d0, d1}, [r0 NEON_ALIGN(128)]!
+.else
+                cmp     r2, #16
+                vld1ge.8 {d0, d1}, [r1]!
+                vst1ge.64 {d0, d1}, [r0 NEON_ALIGN(128)]!
+.endif
+                tst     r2, #8
+                vld1ne.8 {d2}, [r1]!
+                vst1ne.64 {d2}, [r0 NEON_ALIGN(64)]!
+                tst     r2, #4
+                ldrne   r3, [r1], #4
+                strne   r3, [r0 :32], #4
+
+                pop     {r4}
+		b	8b
+#else
+		/*
+		 * Fall through to the code below. It is not entirely
+		 * optimal because it does not indicate the destination
+		 * is word aligned.
+		 */
+#endif
+
+                /* Handle small size of 0-63 bytes, unaligned. */
+16:		bic	r3, r2, #7
+		rsb	r4, r3, #64
+		tst	r2, #7
+		add	pc, pc, r4
+		nop
+		vld1.8 {d0}, [r1]!
+		vst1.8 {d0}, [r0]!
+		vld1.8 {d1}, [r1]!
+		vst1.8 {d1}, [r0]!
+		vld1.8 {d0}, [r1]!
+		vst1.8 {d0}, [r0]!
+		vld1.8 {d1}, [r1]!
+		vst1.8 {d1}, [r0]!
+		vld1.8 {d0}, [r1]!
+		vst1.8 {d0}, [r0]!
+		vld1.8 {d1}, [r1]!
+		vst1.8 {d1}, [r0]!
+		vld1.8 {d0}, [r1]!
+		vst1.8 {d0}, [r0]!
+		vld1.8 {d1}, [r1]!
+		vst1.8 {d1}, [r0]!
+                pop     {r4}
+		beq	9b
+                tst     r2, #4
+                ldrne   r3, [r1 :8], #4         /* Unaligned access. */
+                strne   r3, [r0], #4
+		b	8b
+
+                /* Handle small size of 0-63 bytes, word aligned. */
+17:
+#ifdef CONFIG_THUMB
+		cmp     r2, #32
+                vld1ge.32 {d0-d3}, [r1]!
+                vst1ge.32 {d0-d3}, [r0]!
+                tst     r2, #16
+                vld1ne.32 {d0, d1}, [r1]!
+                vst1ne.32 {d0, d1}, [r0]!
+                tst     r2, #8
+                vld1ne.32 {d2}, [r1]!
+                vst1ne.32 {d2}, [r0]!
+		tst	r2, #7
+#else
+		bic	r3, r2, #7
+		rsb	r4, r3, #64
+		tst	r2, #7
+		add	pc, pc, r4
+		nop
+		vld1.32 {d0}, [r1]!
+		vst1.32 {d0}, [r0]!
+		vld1.32 {d1}, [r1]!
+		vst1.32 {d1}, [r0]!
+		vld1.32 {d0}, [r1]!
+		vst1.32 {d0}, [r0]!
+		vld1.32 {d1}, [r1]!
+		vst1.32 {d1}, [r0]!
+		vld1.32 {d0}, [r1]!
+		vst1.32 {d0}, [r0]!
+		vld1.32 {d1}, [r1]!
+		vst1.32 {d1}, [r0]!
+		vld1.32 {d0}, [r1]!
+		vst1.32 {d0}, [r0]!
+		vld1.32 {d1}, [r1]!
+		vst1.32 {d1}, [r0]!
+#endif
+                pop     {r4}
+		beq	9b
+		tst	r2, #4
+		ldrne	r3, [r1], #4
+		strne	r3, [r0], #4
+		b	8b
+
+		/*
+		 * Fast path for <= 256 bytes, word aligned.
+		 * This is hardcoded for a preload offset of 128 bytes,
+		 * which seems to work well in practice for small sizes.
+		 */
+18:		bics	r3, r2, #31
+.if \early_prefetch == 1
+		pld	[ip, #32]
+		beq	21f
+		pld	[ip, #64]
+		pld	[ip, #96]
+.endif
+		rsb	r4, r3, #256
+		ands	r2, r2, #31
+		/*
+		 * Each code block handling 32 bytes is
+                 * 12 bytes long.
+		 */
+		lsr	r4, r4, #2
+                add     ip, ip, #128
+		add	r4, r4, r4, lsr #1
+		sub	ip, ip, r1
+		add	pc, pc, r4
+		nop
+		pld	[r1, ip]
+		vld1.32 {d0-d3}, [r1]!
+		vst1.32 {d0-d3}, [r0]!
+		pld	[r1, ip]
+		vld1.32 {d4-d7}, [r1]!
+		vst1.32 {d4-d7}, [r0]!
+		pld	[r1, ip]
+		vld1.32 {d0-d3}, [r1]!
+		vst1.32 {d0-d3}, [r0]!
+		pld	[r1, ip]
+		vld1.32 {d4-d7}, [r1]!
+		vst1.32 {d4-d7}, [r0]!
+		pld	[r1, ip]
+		vld1.32 {d0-d3}, [r1]!
+		vst1.32 {d0-d3}, [r0]!
+		W(nop)
+		vld1.32 {d4-d7}, [r1]!
+		vst1.32 {d4-d7}, [r0]!
+		W(nop)
+		vld1.32 {d0-d3}, [r1]!
+		vst1.32 {d0-d3}, [r0]!
+		W(nop)
+		vld1.32 {d4-d7}, [r1]!
+		vst1.32 {d4-d7}, [r0]!
+		beq	19f
+21:
+#ifdef CONFIG_THUMB
+		cmp	r2, #16
+		vld1ge.32 {d0-d1}, [r1]!
+		vst1ge.32 {d0-d1}, [r0]!
+		tst	r2, #8
+		vld1ne.32 {d0}, [r1]!
+		vst1ne.32 {d0}, [r0]!
+#else
+		cmp	r2, #16
+		ldmiage r1!, {r3, r4}
+		stmiage r0!, {r3, r4}
+		ldmiage r1!, {r3, r4}
+		stmiage r0!, {r3, r4}
+		tst	r2, #8
+		ldmiane r1!, {r3, r4}
+		stmiane r0!, {r3, r4}
+#endif
+                tst     r2, #4
+		pop	{r4}
+                ldrne   r3, [r1], #4
+                strne   r3, [r0 :32], #4
+		and	r2, r2, #3
+		b	8b
+19:
+		pop	{r4}
+.if \prefetch_distance > 0 || \early_prefetch == 1
+		pop	{r0}
+.else
+		mov	r0, ip
+.endif
+		bx	lr
+.endm
+
+
+#if defined(MEMCPY_REPLACEMENT_RPI) || defined(MEMCPY_REPLACEMENT_ARMV7_32) \
+|| defined(MEMCPY_REPLACEMENT_ARMV7_64) || defined(MEMCPY_REPLACEMENT_NEON_32) \
+|| defined(MEMCPY_REPLACEMENT_NEON_64)
+
+#ifdef MEMCPY_REPLACEMENT_RPI
 asm_function memcpy
 		memcpy_variant 32, 3, 8, 0
 .endfunc
+#endif
 
+#ifdef MEMCPY_REPLACEMENT_ARMV7_32
+asm_function memcpy
+		memcpy_variant 32, 6, 0, 0
+.endfunc
+#endif
+
+#ifdef MEMCPY_REPLACEMENT_ARMV7_64
+asm_function memcpy
+		memcpy_variant 64, 3, 0, 0
+.endfunc
+#endif
+
+#ifdef MEMCPY_REPLACEMENT_NEON_32
+asm_function memcpy
+		neon_memcpy_variant 32, 6, 1
+.endfunc
+#endif
+
+#ifdef MEMCPY_REPLACEMENT_NEON_64
+asm_function memcpy
+		neon_memcpy_variant 64, 3, 1
+.endfunc
+#endif
+
+#ifdef MEMCPY_REPLACEMENT_NEON_AUTO
+asm_function memcpy
+		neon_memcpy_variant 32, 0, 1
+.endfunc
 #endif
 
 #else
@@ -925,160 +1508,351 @@ asm_function memcpy_new_line_size_32_preload_96_aligned_access
 		memcpy_variant 32, 3, 8, 1
 .endfunc
 
+asm_function memcpy_new_neon_line_size_64
+		neon_memcpy_variant 64, 3, 1
+.endfunc
+
+asm_function memcpy_new_neon_line_size_32
+		neon_memcpy_variant 32, 6, 1
+.endfunc
+
+asm_function memcpy_new_neon_line_size_32_auto
+		neon_memcpy_variant 32, 0, 1
+.endfunc
+
 #endif
 
 /*
- *  Macro for memset replacement.
- *  write_align must be 0, 8, or 32.
+ * Macro for memset replacement.
+ * write_align must be 0, 8, or 32.
+ * use_neon must be 0 or 1.
  */
 
-.macro memset_variant write_align
-		ands	r3, r0, #3
-		mov	ip, r0
-		bne	8f
+.macro memset_variant write_align, use_neon
+.if \use_neon == 1
+	.fpu neon
+.endif
+	ands	r3, r0, #3
+	mov	ip, r0
+	bne	7f
 
-		/* r0 is now aligned to a word boundary. */
-1:		orr	r1, r1, r1, lsl #8
-		cmp	r2, #8
-		orr	r1, r1, r1, lsl #16
-		blt	5f
-		mov	r3, r1
+	/* Destination is word aligned. */
+1:	orr	r1, r1, r1, lsl #8
+.if \use_neon == 1
+	cmp	r2, #16
+.else
+	cmp	r2, #8
+.endif
+	orr	r1, r1, r1, lsl #16
+.if \use_neon == 1
+	blt	13f
+        vmov	d0, r1, r1
+	vmov	d1, r1, r1
+.else
+	blt	5f
+	mov	r3, r1
+.endif
 
-		cmp	r2, #64
-		push 	{r4}
-		blt	4f
-		mov	r4, r1
-
+	cmp	r2, #64
+	push 	{r4}
+.if \use_neon == 1
+	blt	10f
+.else
+	ble	10f
+.endif
 .if \write_align > 0
+	ands	r4, r0, #(\write_align - 1)
+.if \use_neon == 1
+#ifndef CONFIG_THUMB
+	add	r3, r4, #7
+#endif
+.endif
+	/* Let r4 be equal to the number of bytes to align.  */
+	rsb	r4, r4, #\write_align
+	/*
+	 * At this point r4 contains the number of bytes to align
+	 * if eq is not set. The eq flag is set if there are no bytes
+	 * to align.
+	 */
 .if \write_align == 8
-		tst	r0, #4
-		beq	2f
-
-		cmp	r2, #68
-		str	r1, [r0], #4
-	        sub	r2, r2, #4
-		blt     4f
-.else	/* write_align == 32 */
-		tst	r0, #31
-		beq	2f
-		tst     r0, #4
-		strne	r1, [r0], #4
-	        subne	r2, r2, #4
-		tst     r0, #8
-		stmiane r0!, {r1, r3}
-	        subne   r2, r2, #8
-		tst	r0, #16
-		stmiane r0!, {r1, r3}
-	        subne   r2, r2, #16
-	        stmiane r0!, {r1, r3}
-		cmp	r2, #64
-		blt	4f
+	subne	r2, r2, r4
+	strne	r1, [r0], #4
+.elseif \write_align == 32
+	beq	2f
+	tst     r4, #4
+	sub	r2, r2, r4
+	strne	r1, [r0], #4
+.if \use_neon == 1
+#ifdef CONFIG_THUMB
+	tst     r4, #8
+	vst1ne.64 {d0}, [r0 NEON_ALIGN(64)]!
+	cmp	r4, #16
+	vst1ge.64 {d0, d1}, [r0 NEON_ALIGN(128)]!
+#else
+	bic	r4, r3, #7
+	lsr	r4, r4, #1
+	add	pc, pc, r4
+	nop
+	vst1.64 {d0}, [r0 NEON_ALIGN(64)]!
+	vst1.64 {d0}, [r0 NEON_ALIGN(64)]!
+	vst1.64 {d0}, [r0 NEON_ALIGN(64)]!
+	vst1.64 {d0}, [r0 NEON_ALIGN(64)]!
+#endif
+.else
+	tst     r4, #8
+	stmiane r0!, {r1, r3}
+	cmp	r4, #16
+	stmiage r0!, {r1, r3}
+	stmiage r0!, {r1, r3}
 .endif
+.endif	/* \write_align == 32 */
+	cmp	r2, #64
+	blt	4f
+.endif	/* \write_align > 0 */
+
+2:
+.if \use_neon == 1
+        /*
+         * When NEON is enabled, \write_align is
+         * equal to 32 so specify 256-bit alignment in the
+         * NEON store instructions.
+         */
+	subs	r2, r2, #64
+        vmov	q1, q0
+3:	vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+	subs	r2, r2, #64
+        vst1.64 {d0-d3}, [r0 NEON_ALIGN(256)]!
+        bge     3b
+	adds	r2, r2, #64
+.else
+	mov	r4, r1
+	subs	r2, r2, #64
+	push	{r5}
+	mov	r5, r1
+
+3:	stmia	r0!, {r1, r3, r4, r5}
+	subs	r2, r2, #64		/* Thumb16 */
+	stmia	r0!, {r1, r3, r4, r5}
+	stmia	r0!, {r1, r3, r4, r5}
+	stmia	r0!, {r1, r3, r4, r5}
+	bge	3b
+	adds	r2, r2, #64		/* Thumb16 */
+
+	pop	{r5}
+.endif
+	/* Early exit if there are 0 bytes left. */
+/* THUMB(	cbz	r2, 9f	) */
+THUMB(	cmp	r2, #0	)
+THUMB(	beq	9f	)
+ARM(	teq	r2, #0	)
+ARM(	beq	9f	)
+	/*
+	 * Handle 8-64 bytes (or 16-63 bytes in case of NEON).
+	 * In case of NEON, destination must be 8-byte aligned.
+	 */
+4:
+.if \use_neon == 1
+#ifdef CONFIG_THUMB
+	vmov	q1, q0
+	cmp	r2, #32
+	vst1ge.64 {d0-d3}, [r0 NEON_ALIGN(64)]!
+	tst	r2, #16
+	vst1ne.64 {d0, d1}, [r0 NEON_ALIGN(64)]!
+	tst	r2, #8
+	vst1ne.64 {d0}, [r0 NEON_ALIGN(64)]!
+	and	r2, r2, #7
+#else
+	bic	r4, r2, #15
+	subs	r2, r2, r4
+	rsb	r4, r4, #64
+	/*
+	 * When using NEON, the vst instruction
+	 * (storing 16 bytes) is always 32-bit.
+	 */
+	lsr	r4, r4, #2
+	add	pc, pc, r4
+	nop
+	vst1.64 {d0, d1}, [r0 NEON_ALIGN(64)]!
+	vst1.64 {d0, d1}, [r0 NEON_ALIGN(64)]!
+	vst1.64 {d0, d1}, [r0 NEON_ALIGN(64)]!
+	vst1.64 {d0, d1}, [r0 NEON_ALIGN(64)]!
+	cmp	r2, #8
+	strge	r1, [r0], #4
+	strge	r1, [r0], #4
+	subge	r2, r2, #8
+#endif
+.else	/* use_neon == 0 */
+	bic	r4, r2, #7
+	subs	r2, r2, r4
+	rsb	r4, r4, #64
+	/*
+	 * The stmia instruction (storing 8 bytes) is 32-bit for ARM,
+	 * 16-bit for Thumb2.
+	 */
+THUMB(	lsrs	r4, r4, #2	)
+ARM(	lsr	r4, r4, #1	)
+	add	pc, pc, r4
+	nop
+	stmia	r0!, {r1, r3}
+	stmia	r0!, {r1, r3}
+	stmia	r0!, {r1, r3}
+	stmia	r0!, {r1, r3}
+	stmia	r0!, {r1, r3}
+	stmia	r0!, {r1, r3}
+	stmia	r0!, {r1, r3}
+	stmia	r0!, {r1, r3}
+.endif
+14:	pop	{r4}
+
+5:	cmp	r2, #4
+	strge	r1, [r0], #4
+	/* Early exit for multiple of 4 size. */
+	ands	r2, r2, #3
+	moveq	r0, ip
+	bxeq	lr
+
+	/*
+	 * At this point there are 1, 2 or 3 bytes,
+	 * and the destination is aligned.
+	 */
+6:	cmp	r2, #2
+	strhge	r1, [r0], #2
+	strbne	r1, [r0]
+	mov	r0, ip
+	bx	lr
+
+.if \use_neon == 1
+	/* 0-15 bytes left, word aligned. */
+13:	cmp	r2, #8
+	strge	r1, [r0]
+	strge	r1, [r0, #4]
+	addge	r0, r0, #8
+	subge	r2, r2, #8
+	b	5b
 .endif
 
-2:		push	{r5}
-		mov	r5, r1
+	/* Unaligned case. */
+7:	cmp	r2, #4
+	blt	8f
+#ifdef CONFIG_THUMB
+.if \use_neon == 1
+	/*
+	 * When Thumb2 is enabled with NEON, use the optimized
+	 * unaligned NEON code path for small sizes.
+	 */
+	cmp 	r2, #64
+	blt	11f
+.endif
+#endif
+	/* Align the destination. */
+	cmp	r3, #2
+	sub	r2, r2, #4
+	strble	r1, [r0]
+	strble	r1, [r0, #1]
+	addle	r0, r0, #2
+	add	r2, r2, r3
+	strbne	r1, [r0], #1
+	b	1b
 
-3:		stmia	r0!, {r1, r3, r4, r5}
-		subs	r2, r2, #64
-		stmia	r0!, {r1, r3, r4, r5}
-		cmp	r2, #64
-		stmia	r0!, {r1, r3, r4, r5}
-		stmia	r0!, {r1, r3, r4, r5}
-		bge	3b
+	/* 0 to 3 bytes left. */
+8:	cmp	r2, #2
+	strbge  r1, [r0]
+	strbge  r1, [r0, #1]
+	addge	r0, r0, #2
+	tst	r2, #1
+	strbne  r1, [r0]
+	mov	r0, ip
+	bx	lr
 
-		pop	{r5}
-		/* Early exit if there are 0 bytes left. */
-	THUMB(	cbz	r2, 7f	)
-	ARM(	teq	r2, #0	)
-	ARM(	beq	7f	)
+9:	pop	{r4}
+	mov	r0, ip
+	bx	lr
 
-		/* Handle 8-64 bytes. */
-4:		bic	r4, r2, #7
-		subs	r2, r2, r4
-		rsb	r4, r4, #64
-		/* The stmia instruction is 32-bit for ARM, 16-bit for Thumb2. */
-	THUMB(	lsrs	r4, r4, #2	)
-	ARM(	lsrs	r4, r4, #1	)
-		add	pc, pc, r4
-		nop
-		stmia	r0!, {r1, r3}
-		stmia	r0!, {r1, r3}
-		stmia	r0!, {r1, r3}
-		stmia	r0!, {r1, r3}
-		stmia	r0!, {r1, r3}
-		stmia	r0!, {r1, r3}
-		stmia	r0!, {r1, r3}
-		stmia	r0!, {r1, r3}
-		pop	{r4}
+	/*
+	 * Word aligned 8 <= size <= 64
+	 * (16 <= size <= 63 in case of NEON).
+	 */
+10:
+	/* Align the destination to an 8 byte boundary. */
+	tst     r0, #4
+	strne	r1, [r0], #4
+	subne	r2, r2, #4
+.if \use_neon == 1
+	cmp	r2, #16
+	poplt	{r4}
+	blt	13b
+.else
+	cmp	r2, #8
+	blt	14b
+.endif
+	b	4b
 
-5:		cmp	r2, #4
-		strge	r1, [r0], #4
-		/* Early exit for multiple of 4 size. */
-		ands	r2, r2, #3
-		moveq	r0, ip
-		bxeq	lr
-
-		/*
-		 * At this point there are 1, 2 or 3 bytes,
-		 * and the destination may be unaligned.
-		 */
-6:		cmp	r2, #2
-		strbge	r1, [r0], #1
-		strbge	r1, [r0], #1
-		strbne	r1, [r0], #1
-		mov	r0, ip
-		bx	lr
-
-7:		pop	{r4}
-		mov	r0, ip
-		bx	lr
-
-8:		cmp	r2, #4
-		blt	9f
-		cmp	r3, #2
-		strblt	r1, [r0], #1
-		strble	r1, [r0], #1
-		subs	r2, r2, #4
-		strb	r1, [r0], #1
-		add	r2, r2, r3
-		b	1b
-
-9:		cmp	r2, #0
-		bne	6b
-		bx	lr
+#ifdef CONFIG_THUMB
+.if \use_neon == 1
+	/*
+	 * Handle 4 <= size <= 63 bytes, unaligned.
+	 * Use unaligned NEON instructions with Thumb2.
+	 */
+11:
+	orr	r1, r1, r1, lsl #8
+	tst	r2, #8
+	orr	r1, r1, r1, lsl #16
+        vmov	d0, r1, r1
+	vst1ne.8 {d0}, [r0]!
+	vmov	d1, r1, r1
+	tst	r2, #16
+	vst1ne.8 {d0, d1}, [r0]!
+	vmov	q1, q0
+	cmp	r2, #32
+	and	r2, r2, #7
+	vst1ge.8 {d0-d3}, [r0]!
+	cmp	r2, #4
+	/* The following store is unaligned. */
+	strge	r1, [r0], #4
+	subge	r2, r2, #4
+	b	8b
+.endif
+#endif
 .endm
 
-#if defined(MEMSET_REPLACEMENT_SUNXI) || defined(MEMSET_REPLACEMENT_RPI)
-
-#ifdef MEMSET_REPLACEMENT_SUNXI
-
-asm_function memset
-		memset_variant 0
-.endfunc
-
-#endif
+#if defined(MEMSET_REPLACEMENT_RPI) || defined(MEMSET_REPLACEMENT_ARMV7_32) \
+|| defined(MEMSET_REPLACEMENT_ARMV7_64) || defined(MEMSET_REPLACEMENT_NEON_32) \
+|| defined(MEMSET_REPLACEMENT_NEON_64)
 
 #ifdef MEMSET_REPLACEMENT_RPI
-
 asm_function memset
-		memset_variant 32
+		memset_variant 32, 0
 .endfunc
+#endif
 
+#if defined(MEMSET_REPLACEMENT_ARMV7_32) || defined(MEMSET_REPLACEMENT_ARMV7_64)
+asm_function memset
+		memset_variant 8, 0
+.endfunc
+#endif
+
+#if defined(MEMSET_REPLACEMENT_NEON_32) || defined(MEMSET_REPLACEMENT_NEON_64)
+asm_function memset
+		memset_variant 32, 1
+.endfunc
 #endif
 
 #else
 
 asm_function memset_new_align_0
-		memset_variant 0
+		memset_variant 0, 0
 .endfunc
 
 asm_function memset_new_align_8
-		memset_variant 8
+		memset_variant 8, 0
 .endfunc
 
 asm_function memset_new_align_32
-		memset_variant 32
+		memset_variant 32, 0
+.endfunc
+
+asm_function memset_neon
+		memset_variant 32, 1
 .endfunc
 
 #endif
